@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+/**
+ * ATENÇÃO VERCEL: Este armazenamento em memória NÃO persiste entre requisições no Vercel!
+ * No Vercel, cada função serverless é stateless e os dados são perdidos.
+ * Para produção, considere usar:
+ * - Vercel KV (Redis)
+ * - MongoDB Atlas
+ * - Supabase
+ * - Firebase Firestore
+ * 
+ * Este endpoint funciona perfeitamente para receber webhooks, mas os dados
+ * não serão persistidos entre deploys ou múltiplas instâncias.
+ */
+
 // In-memory storage for webhook responses (in production, use a database)
 let webhookResponses: Array<{
   id: string;
@@ -59,6 +72,40 @@ export async function POST(request: NextRequest) {
       `[RECEIVE-RESPONSE] Response received from ${source || 'unknown'}:`,
       responseRecord.id
     );
+
+    // Add response to conversation history automatically
+    try {
+      const conversationPayload = {
+        action: 'add_message',
+        clientId,
+        clientName: clientName || 'Cliente',
+        sender: 'client',
+        senderName: `${clientName || 'Cliente'} (via ${source || 'n8n'})`,
+        message: typeof response === 'string' ? response : JSON.stringify(response),
+        timestamp: new Date().toLocaleString('pt-BR'),
+        type: 'message',
+        status: status || 'received',
+      };
+
+      // Call internal conversation API
+      const conversationRes = await fetch(
+        `${request.nextUrl.origin}/api/webhooks/conversations`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(conversationPayload),
+        }
+      );
+
+      if (conversationRes.ok) {
+        console.log('[RECEIVE-RESPONSE] Message added to conversation history');
+      } else {
+        console.warn('[RECEIVE-RESPONSE] Failed to add to conversation:', await conversationRes.text());
+      }
+    } catch (convError) {
+      console.error('[RECEIVE-RESPONSE] Error adding to conversation:', convError);
+      // Don't fail the webhook response if conversation storage fails
+    }
 
     return NextResponse.json(
       {

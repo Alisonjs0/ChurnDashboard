@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+/**
+ * ATENÇÃO VERCEL: Este armazenamento em memória NÃO persiste entre requisições!
+ * No Vercel, cada função serverless é stateless. Os dados são perdidos entre:
+ * - Diferentes requisições (podem rodar em containers diferentes)
+ * - Deploys
+ * - Timeout de função (após 10-60 segundos de inatividade)
+ * 
+ * Para produção com Vercel, integre com:
+ * - Vercel KV (Redis) - Ideal para cache rápido
+ * - MongoDB Atlas - Ideal para histórico completo
+ * - Supabase/Firebase - Alternativa com real-time
+ */
+
 // In-memory conversation storage
 interface ConversationMessage {
   id: string;

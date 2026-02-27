@@ -42,6 +42,13 @@ const ClientChat: React.FC<ClientChatProps> = ({
   useEffect(() => {
     setChatMessages(initialMessages);
     loadConversationHistory();
+
+    // Poll for new messages every 3 seconds
+    const pollInterval = setInterval(() => {
+      loadConversationHistory();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
   }, [clientId]);
 
   const loadConversationHistory = async () => {

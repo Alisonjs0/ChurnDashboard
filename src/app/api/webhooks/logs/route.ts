@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+/**
+ * ATENÇÃO VERCEL: Armazenamento em memória não persiste no Vercel!
+ * Este é um storage temporário que será resetado entre requisições.
+ * Para logs persistentes no Vercel, use:
+ * - Vercel Log Drains
+ * - Datadog / Sentry
+ * - MongoDB / Supabase
+ */
+
 // In-memory storage for webhook logs (in production, use a database)
 let webhookLogs: Array<{
   id: string;
