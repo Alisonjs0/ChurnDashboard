@@ -56,6 +56,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
       const response = await fetch(`/api/webhooks/conversations?clientId=${clientId}&limit=100`);
       if (response.ok) {
         const data = await response.json();
+        console.log('[ClientChat] Loaded conversation data:', data);
         if (data.data?.messages) {
           // Convert API messages to ChatMessage format
           const apiMessages = data.data.messages.map((msg: any) => ({
@@ -66,11 +67,16 @@ const ClientChat: React.FC<ClientChatProps> = ({
             timestamp: msg.timestamp,
             type: msg.type || 'message',
           }));
+          console.log('[ClientChat] Setting messages:', apiMessages.length, 'messages');
           setChatMessages(apiMessages);
+        } else {
+          console.log('[ClientChat] No messages in conversation');
         }
+      } else {
+        console.warn('[ClientChat] Failed to load conversation:', response.status);
       }
     } catch (error) {
-      console.error('Error loading conversation history:', error);
+      console.error('[ClientChat] Error loading conversation history:', error);
       // Fall back to initial messages if API fails
       setChatMessages(initialMessages);
     }

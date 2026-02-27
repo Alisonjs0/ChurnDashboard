@@ -2,14 +2,14 @@
 
 ## 📍 URLs do Webhook
 
+### **✅ Produção (Vercel) - USE ESTA:**
+```
+POST https://churn-dashboard-six.vercel.app/api/webhooks/receive-response
+```
+
 ### **Desenvolvimento Local:**
 ```
 POST http://localhost:3000/api/webhooks/receive-response
-```
-
-### **Produção (Vercel):**
-```
-POST https://seu-projeto.vercel.app/api/webhooks/receive-response
 ```
 
 ---

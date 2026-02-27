@@ -72,6 +72,8 @@ export async function POST(request: NextRequest) {
       `[RECEIVE-RESPONSE] Response received from ${source || 'unknown'}:`,
       responseRecord.id
     );
+    console.log('[RECEIVE-RESPONSE] ClientId:', clientId, 'ClientName:', clientName);
+    console.log('[RECEIVE-RESPONSE] Response message:', typeof response === 'string' ? response : JSON.stringify(response));
 
     // Add response to conversation history automatically
     try {
@@ -80,15 +82,19 @@ export async function POST(request: NextRequest) {
         clientId,
         clientName: clientName || 'Cliente',
         sender: 'client',
-        senderName: `${clientName || 'Cliente'} (via ${source || 'n8n'})`,
+        senderName: `${clientName || 'Cliente'}`,
         message: typeof response === 'string' ? response : JSON.stringify(response),
         timestamp: new Date().toLocaleString('pt-BR'),
         type: 'message',
         status: status || 'received',
       };
 
-      // Call internal conversation API
-      const conversationRes = await fetch(
+      console.log('[RECEIVE-RESPONSE] Calling conversation API with payload:', conversationPayload);
+
+      // Import the POST handler directly to avoid fetch issues
+      const { POST: conversationsHandler } = await import('../conversations/route');
+      
+      const conversationRequest = new NextRequest(
         `${request.nextUrl.origin}/api/webhooks/conversations`,
         {
           method: 'POST',
@@ -97,10 +103,14 @@ export async function POST(request: NextRequest) {
         }
       );
 
+      const conversationRes = await conversationsHandler(conversationRequest);
+
       if (conversationRes.ok) {
-        console.log('[RECEIVE-RESPONSE] Message added to conversation history');
+        const convData = await conversationRes.json();
+        console.log('[RECEIVE-RESPONSE] Message added to conversation:', convData);
       } else {
-        console.warn('[RECEIVE-RESPONSE] Failed to add to conversation:', await conversationRes.text());
+        const errorText = await conversationRes.text();
+        console.warn('[RECEIVE-RESPONSE] Failed to add to conversation:', conversationRes.status, errorText);
       }
     } catch (convError) {
       console.error('[RECEIVE-RESPONSE] Error adding to conversation:', convError);
