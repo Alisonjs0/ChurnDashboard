@@ -37,6 +37,16 @@ const ClientChat: React.FC<ClientChatProps> = ({
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages]);
 
   // Load messages from API on component mount or when clientId changes
   useEffect(() => {
@@ -207,7 +217,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0" id="messages-container">
         {filteredMessages.length > 0 ? (
           filteredMessages.map((message) => (
             <div
@@ -238,6 +248,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
             Nenhuma mensagem
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
