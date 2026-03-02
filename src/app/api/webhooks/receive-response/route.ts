@@ -1,26 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-/**
- * ATENÇÃO VERCEL: Este armazenamento em memória NÃO persiste entre requisições no Vercel!
- * No Vercel, cada função serverless é stateless e os dados são perdidos.
- * Para produção, considere usar:
- * - Vercel KV (Redis)
- * - MongoDB Atlas
- * - Supabase
- * - Firebase Firestore
- * 
- * Este endpoint funciona perfeitamente para receber webhooks, mas os dados
- * não serão persistidos entre deploys ou múltiplas instâncias.
- */
-
-// In-memory storage for webhook responses (in production, use a database)
-let webhookResponses: Array<{
-  id: string;
-  receivedAt: string;
-  source: string;
-  status: string;
-  payload: unknown;
-}> = [];
+import { addConversationMessage, addWebhookEvent, getWebhookEvents } from '@/lib/chat-storage';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,7 +15,6 @@ export async function POST(request: NextRequest) {
       source,
     } = body;
 
-    // Validate required fields
     if (!clientId) {
       return NextResponse.json(
         { success: false, error: 'Missing required field: clientId' },
@@ -44,12 +22,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create response record
-    const responseRecord = {
-      id: `resp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      receivedAt: new Date().toISOString(),
-      source: source || 'external_service',
+    const eventRecord = await addWebhookEvent({
+      type: 'received',
+      clientId,
+      clientName: clientName || 'Cliente',
+      endpoint: '/api/webhooks/receive-response',
       status: status || 'received',
+      source: source || 'external_service',
+      messageId,
       payload: {
         messageId,
         clientId,
@@ -58,75 +38,37 @@ export async function POST(request: NextRequest) {
         timestamp,
         source,
       },
-    };
+    });
 
-    // Store in memory
-    webhookResponses.push(responseRecord);
+    const responseText = typeof response === 'string' ? response : JSON.stringify(response);
 
-    // Keep only last 100 responses to prevent memory issues
-    if (webhookResponses.length > 100) {
-      webhookResponses = webhookResponses.slice(-100);
-    }
-
-    console.log(
-      `[RECEIVE-RESPONSE] Response received from ${source || 'unknown'}:`,
-      responseRecord.id
-    );
-    console.log('[RECEIVE-RESPONSE] ClientId:', clientId, 'ClientName:', clientName);
-    console.log('[RECEIVE-RESPONSE] Response message:', typeof response === 'string' ? response : JSON.stringify(response));
-
-    // Add response to conversation history automatically
-    try {
-      const conversationPayload = {
-        action: 'add_message',
-        clientId,
-        clientName: clientName || 'Cliente',
-        sender: 'client',
-        senderName: `${clientName || 'Cliente'}`,
-        message: typeof response === 'string' ? response : JSON.stringify(response),
-        timestamp: new Date().toLocaleString('pt-BR'),
-        type: 'message',
-        status: status || 'received',
-      };
-
-      console.log('[RECEIVE-RESPONSE] Calling conversation API with payload:', conversationPayload);
-
-      // Import the POST handler directly to avoid fetch issues
-      const { POST: conversationsHandler } = await import('../conversations/route');
-      
-      const conversationRequest = new NextRequest(
-        `${request.nextUrl.origin}/api/webhooks/conversations`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(conversationPayload),
-        }
-      );
-
-      const conversationRes = await conversationsHandler(conversationRequest);
-
-      if (conversationRes.ok) {
-        const convData = await conversationRes.json();
-        console.log('[RECEIVE-RESPONSE] Message added to conversation:', convData);
-      } else {
-        const errorText = await conversationRes.text();
-        console.warn('[RECEIVE-RESPONSE] Failed to add to conversation:', conversationRes.status, errorText);
-      }
-    } catch (convError) {
-      console.error('[RECEIVE-RESPONSE] Error adding to conversation:', convError);
-      // Don't fail the webhook response if conversation storage fails
-    }
+    await addConversationMessage({
+      messageId,
+      clientId,
+      clientName: clientName || 'Cliente',
+      sender: 'client',
+      senderName: clientName || 'Cliente',
+      message: responseText,
+      timestamp: timestamp || new Date().toLocaleString('pt-BR'),
+      type: 'message',
+      status: 'received',
+      source: source || 'external_service',
+      direction: 'inbound',
+      metadata: {
+        webhookEventId: eventRecord.id,
+      },
+    });
 
     return NextResponse.json(
       {
         success: true,
         message: 'Webhook response received successfully',
-        responseId: responseRecord.id,
+        responseId: eventRecord.id,
         data: {
           clientId,
           clientName,
           status,
-          receivedAt: responseRecord.receivedAt,
+          receivedAt: eventRecord.timestamp,
         },
       },
       { status: 201 }
@@ -146,40 +88,31 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const clientId = searchParams.get('clientId');
+    const clientId = searchParams.get('clientId') || undefined;
     const limit = parseInt(searchParams.get('limit') || '50', 10);
-    const source = searchParams.get('source');
+    const source = searchParams.get('source') || undefined;
 
-    let filtered = [...webhookResponses];
-
-    // Filter by clientId if provided
-    if (clientId) {
-      filtered = filtered.filter((r) => {
-        const payload = r.payload as any;
-        return payload?.clientId === clientId;
-      });
-    }
-
-    // Filter by source if provided
-    if (source) {
-      filtered = filtered.filter((r) => r.source === source);
-    }
-
-    // Sort by most recent first
-    filtered.sort(
-      (a, b) =>
-        new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
-    );
-
-    // Apply limit
-    const responses = filtered.slice(0, limit);
+    const { rows, total } = await getWebhookEvents({
+      type: 'received',
+      clientId,
+      source,
+      limit,
+    });
 
     return NextResponse.json(
       {
         success: true,
-        count: responses.length,
-        total: filtered.length,
-        data: responses,
+        count: rows.length,
+        total,
+        data: rows.map((row) => ({
+          id: row.id,
+          receivedAt: row.timestamp,
+          source: row.source,
+          status: row.status,
+          payload: row.payload,
+          response: row.response,
+          error: row.error,
+        })),
       },
       { status: 200 }
     );

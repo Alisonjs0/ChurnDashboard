@@ -1,16 +1,46 @@
 'use client';
 
-import React, { useState } from 'react';
-import ClientSidebar from '@/app/components/ClientSidebar';
+import React, { useState, useEffect } from 'react';
+import ClientSidebar, { Client } from '@/app/components/ClientSidebar';
 import MainDashboard from '@/app/components/MainDashboard';
 import CriticalRiskCard from '@/app/components/CriticalRiskCard';
 import ClientChat from '@/app/components/ClientChat';
 import { clientsData, ClientWithContact } from '@/app/data/clients';
-import { getClientMessages } from '@/app/data/messages';
 
 const DashboardLayout: React.FC = () => {
   // Começa com null para mostrar dashboard geral
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [apiClients, setApiClients] = useState<Client[]>([]);
+  const [isLoadingClients, setIsLoadingClients] = useState(false);
+
+  // Carregar clientes do Supabase via API
+  useEffect(() => {
+    setIsLoadingClients(true);
+    fetch('/api/webhooks/clients')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.data)) {
+          // Mapear dados do Supabase para formato do Cliente
+          const mappedClients = data.data.map((item: any) => ({
+            id: item.id || String(item.id),
+            name: item.clienta || item.client_name || 'Sem nome',
+            status: (item.status || 'BAIXO') as 'CRÍTICO' | 'ALTO' | 'MÉDIO' | 'BAIXO',
+            riskLevel: item.score ? parseInt(item.score) : 50,
+          }));
+          setApiClients(mappedClients);
+        }
+      })
+      .catch(err => console.error('Erro carregando clientes:', err))
+      .finally(() => setIsLoadingClients(false));
+  }, []);
+
+  // Usar clientes do API se disponíveis, senão usar dados mock
+  const clients = apiClients.length > 0 ? apiClients : clientsData.map(c => ({
+    id: c.id,
+    name: c.name,
+    status: c.status as 'CRÍTICO' | 'ALTO' | 'MÉDIO' | 'BAIXO',
+    riskLevel: c.riskLevel,
+  }));
 
   const selectedClient = selectedClientId 
     ? clientsData.find((c) => c.id === selectedClientId) as ClientWithContact | undefined
@@ -112,7 +142,7 @@ const DashboardLayout: React.FC = () => {
       {/* Client Sidebar - Left */}
       <div className="hidden md:flex w-80 flex-shrink-0 border-r border-slate-700">
         <ClientSidebar
-          clients={clientsData}
+          clients={clients}
           selectedClientId={selectedClientId}
           onSelectClient={setSelectedClientId}
         />
@@ -146,7 +176,7 @@ const DashboardLayout: React.FC = () => {
             <ClientChat
               clientId={selectedClientId!}
               clientName={selectedClient.name}
-              messages={getClientMessages(selectedClientId!)}
+              messages={[]}
               clientEmail={selectedClient.email}
               clientPhone={selectedClient.phone}
             />

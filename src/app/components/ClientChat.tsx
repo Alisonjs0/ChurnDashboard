@@ -10,10 +10,15 @@ import {
 
 export interface ChatMessage {
   id: string;
-  sender: 'client' | 'support';
+  sender: 'client' | 'support' | 'system';
   senderName: string;
   message: string;
   timestamp: string;
+  sentAt?: string;
+  status?: 'sent' | 'received' | 'failed';
+  source?: string;
+  direction?: 'outbound' | 'inbound' | 'internal';
+  webhookStatus?: number | null;
   attachments?: string[];
   type?: 'message' | 'note' | 'alert';
 }
@@ -69,12 +74,19 @@ const ClientChat: React.FC<ClientChatProps> = ({
         console.log('[ClientChat] Loaded conversation data:', data);
         if (data.data?.messages) {
           // Convert API messages to ChatMessage format
+          // sender === 'system' → OUTPUT (mensagens enviadas)
+          // sender !== 'system' → INPUT (mensagens recebidas)
           const apiMessages = data.data.messages.map((msg: any) => ({
             id: msg.id,
-            sender: msg.sender === 'support' ? 'support' : 'client',
+            sender: msg.sender === 'system' ? 'support' : 'client',
             senderName: msg.senderName,
             message: msg.message,
             timestamp: msg.timestamp,
+            sentAt: msg.sentAt,
+            status: msg.status,
+            source: msg.source,
+            direction: msg.direction,
+            webhookStatus: msg.webhookStatus,
             type: msg.type || 'message',
           }));
           console.log('[ClientChat] Setting messages:', apiMessages.length, 'messages');
@@ -113,10 +125,13 @@ const ClientChat: React.FC<ClientChatProps> = ({
     // Optimistic update - add message to UI immediately
     const newMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      sender: 'support',
+      sender: 'support', // Exibido como support (OUTPUT)
       senderName: 'Support Team',
       message: messageText,
       timestamp,
+      status: 'sent',
+      source: 'dashboard',
+      direction: 'outbound',
       type: 'message',
     };
 
@@ -125,53 +140,29 @@ const ClientChat: React.FC<ClientChatProps> = ({
     setIsLoading(true);
 
     try {
-      // 1. Store message in conversation history
-      const conversationRes = await fetch('/api/webhooks/conversations', {
+      // Persist + send webhook in one API call
+      const sendRes = await fetch('/api/webhooks/send-message', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action: 'add_message',
           clientId,
           clientName,
           clientEmail,
           clientPhone,
-          sender: 'support',
-          senderName: 'Support Team',
           message: messageText,
-          type: 'message',
-          status: 'sent',
+          senderName: 'Support Team',
+          sender: 'system', // Envia como 'system' = OUTPUT
           timestamp,
         }),
       });
 
-      if (!conversationRes.ok) {
-        console.error('Failed to save message to conversation:', conversationRes.statusText);
+      if (!sendRes.ok) {
+        throw new Error(`Failed to send message: ${sendRes.statusText}`);
       }
 
-      // 2. Send to external webhook
-      try {
-        await fetch('/api/webhooks/send-message', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            clientId,
-            clientName,
-            clientEmail,
-            clientPhone,
-            message: messageText,
-            senderName: 'Support Team',
-            sender: 'support',
-            timestamp,
-          }),
-        });
-      } catch (error) {
-        console.error('Webhook delivery error:', error);
-        // Don't fail the message save if webhook fails
-      }
+      await loadConversationHistory();
     } catch (error) {
       console.error('Error sending message:', error);
       // Remove optimistic message if save failed
@@ -240,6 +231,10 @@ const ClientChat: React.FC<ClientChatProps> = ({
                 </p>
                 <p className="text-sm leading-relaxed">{message.message}</p>
                 <p className="text-slate-500 text-xs">{message.timestamp}</p>
+                <p className="text-slate-500 text-[10px] leading-tight">
+                  {`status: ${message.status || 'n/a'} • origem: ${message.source || 'n/a'}`}
+                  {typeof message.webhookStatus === 'number' ? ` • webhook: ${message.webhookStatus}` : ''}
+                </p>
               </div>
             </div>
           ))

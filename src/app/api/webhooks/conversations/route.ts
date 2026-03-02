@@ -1,73 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  addConversationMessage,
+  deleteConversationMessages,
+  getConversationMessages,
+} from '@/lib/chat-storage';
 
-/**
- * ATENÇÃO VERCEL: Este armazenamento em memória NÃO persiste entre requisições!
- * No Vercel, cada função serverless é stateless. Os dados são perdidos entre:
- * - Diferentes requisições (podem rodar em containers diferentes)
- * - Deploys
- * - Timeout de função (após 10-60 segundos de inatividade)
- * 
- * Para produção com Vercel, integre com:
- * - Vercel KV (Redis) - Ideal para cache rápido
- * - MongoDB Atlas - Ideal para histórico completo
- * - Supabase/Firebase - Alternativa com real-time
- */
-
-// In-memory conversation storage
-interface ConversationMessage {
-  id: string;
-  messageId: string;
-  clientId: string;
-  clientName: string;
-  clientEmail?: string;
-  clientPhone?: string;
-  sender: 'support' | 'client' | 'system';
-  senderName: string;
-  message: string;
-  timestamp: string;
-  sentAt: string;
-  type?: 'message' | 'note' | 'alert';
-  status: 'sent' | 'received' | 'failed';
-  error?: string;
-}
-
-interface ConversationThread {
-  id: string;
-  clientId: string;
-  clientName: string;
-  clientEmail?: string;
-  clientPhone?: string;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  latestMessage: string;
-  messages: ConversationMessage[];
-}
-
-// Store: clientId -> ConversationThread
-let conversationThreads: Record<string, ConversationThread> = {};
-
-function getOrCreateThread(
-  clientId: string,
-  clientName: string,
-  clientEmail?: string,
-  clientPhone?: string
-): ConversationThread {
-  if (!conversationThreads[clientId]) {
-    conversationThreads[clientId] = {
-      id: `thread_${clientId}_${Date.now()}`,
-      clientId,
-      clientName,
-      clientEmail,
-      clientPhone,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messageCount: 0,
-      latestMessage: '',
-      messages: [],
-    };
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Internal server error';
   }
-  return conversationThreads[clientId];
+}
+
+function isMissingConversationTableError(error: unknown) {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : '';
+
+  const message = getErrorMessage(error);
+
+  return (
+    code === '42P01' ||
+    message.includes('42P01') ||
+    (message.includes('conversation_messages') && message.includes('does not exist'))
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -82,40 +42,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Action: add_message - Adiciona uma mensagem ao histórico
     if (action === 'add_message') {
-      const {
-        messageId,
-        sender,
-        senderName,
-        message,
-        timestamp,
-        type,
-        status,
-        error,
-      } = body;
+      const { messageId, sender, senderName, message, timestamp, type, status, error, source, direction, webhookStatus, metadata } = body;
 
       if (!sender || !senderName || !message) {
         return NextResponse.json(
           {
             success: false,
-            error:
-              'Missing required fields: sender, senderName, message',
+            error: 'Missing required fields: sender, senderName, message',
           },
           { status: 400 }
         );
       }
 
-      const thread = getOrCreateThread(
-        clientId,
-        clientName || 'Unknown Client',
-        clientEmail,
-        clientPhone
-      );
-
-      const conversationMessage: ConversationMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        messageId: messageId || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      const conversationMessage = await addConversationMessage({
+        messageId,
         clientId,
         clientName: clientName || 'Unknown Client',
         clientEmail,
@@ -123,39 +64,30 @@ export async function POST(request: NextRequest) {
         sender,
         senderName,
         message,
-        timestamp: timestamp || new Date().toLocaleString('pt-BR'),
-        sentAt: new Date().toISOString(),
-        type: type || 'message',
-        status: status || 'sent',
+        timestamp,
+        type,
+        status,
         error,
-      };
-
-      thread.messages.push(conversationMessage);
-      thread.messageCount = thread.messages.length;
-      thread.latestMessage = message;
-      thread.updatedAt = new Date().toISOString();
-
-      // Keep only last 1000 messages per thread to manage memory
-      if (thread.messages.length > 1000) {
-        thread.messages = thread.messages.slice(-1000);
-      }
+        source,
+        direction,
+        webhookStatus,
+        metadata,
+      });
 
       return NextResponse.json(
         {
           success: true,
           message: 'Message added to conversation',
           data: {
-            conversationId: thread.id,
+            conversationId: `thread_${clientId}`,
             messageId: conversationMessage.id,
             clientId,
-            messageCount: thread.messageCount,
           },
         },
         { status: 201 }
       );
     }
 
-    // Action: link_response - Vincula uma resposta a uma mensagem original
     if (action === 'link_response') {
       const { originalMessageId, response, responseSource, status } = body;
 
@@ -169,45 +101,33 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const thread = conversationThreads[clientId];
-      if (!thread) {
-        return NextResponse.json(
-          { success: false, error: 'Conversation thread not found' },
-          { status: 404 }
-        );
-      }
-
-      // Add response as a system/service message
-      const responseMessage: ConversationMessage = {
-        id: `resp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      const responseMessage = await addConversationMessage({
         messageId: originalMessageId,
         clientId,
-        clientName: clientName || thread.clientName,
-        clientEmail: clientEmail || thread.clientEmail,
-        clientPhone: clientPhone || thread.clientPhone,
+        clientName: clientName || 'Unknown Client',
+        clientEmail,
+        clientPhone,
         sender: 'system',
         senderName: `Sistema - ${responseSource || 'Resposta Automática'}`,
         message: typeof response === 'string' ? response : JSON.stringify(response),
         timestamp: new Date().toLocaleString('pt-BR'),
-        sentAt: new Date().toISOString(),
         type: 'message',
         status: status || 'received',
-      };
-
-      thread.messages.push(responseMessage);
-      thread.messageCount = thread.messages.length;
-      thread.latestMessage = responseMessage.message;
-      thread.updatedAt = new Date().toISOString();
+        source: responseSource || 'external_service',
+        direction: 'inbound',
+        metadata: {
+          linkedOriginalMessageId: originalMessageId,
+        },
+      });
 
       return NextResponse.json(
         {
           success: true,
           message: 'Response linked to conversation',
           data: {
-            conversationId: thread.id,
+            conversationId: `thread_${clientId}`,
             responseMessageId: responseMessage.id,
             originalMessageId,
-            messageCount: thread.messageCount,
           },
         },
         { status: 201 }
@@ -244,8 +164,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const thread = conversationThreads[clientId];
-    if (!thread) {
+    const { rows, total } = await getConversationMessages(clientId, limit, offset);
+
+    if (rows.length === 0) {
       return NextResponse.json(
         {
           success: true,
@@ -266,56 +187,115 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Calculate statistics
+    const first = rows[0];
+
     const stats = {
-      totalMessages: thread.messages.length,
-      sentMessages: thread.messages.filter((m) => m.status === 'sent').length,
-      receivedMessages: thread.messages.filter((m) => m.status === 'received').length,
-      failedMessages: thread.messages.filter((m) => m.status === 'failed').length,
+      totalMessages: total,
+      sentMessages: rows.filter((m) => m.status === 'sent').length,
+      receivedMessages: rows.filter((m) => m.status === 'received').length,
+      failedMessages: rows.filter((m) => m.status === 'failed').length,
       messagesByType: {
-        message: thread.messages.filter((m) => m.type === 'message').length,
-        note: thread.messages.filter((m) => m.type === 'note').length,
-        alert: thread.messages.filter((m) => m.type === 'alert').length,
+        message: rows.filter((m) => m.type === 'message').length,
+        note: rows.filter((m) => m.type === 'note').length,
+        alert: rows.filter((m) => m.type === 'alert').length,
       },
       messagesByAuthor: {
-        support: thread.messages.filter((m) => m.sender === 'support').length,
-        client: thread.messages.filter((m) => m.sender === 'client').length,
-        system: thread.messages.filter((m) => m.sender === 'system').length,
+        support: rows.filter((m) => m.sender === 'support').length,
+        client: rows.filter((m) => m.sender === 'client').length,
+        system: rows.filter((m) => m.sender === 'system').length,
       },
     };
-
-    // Apply pagination
-    const messages = thread.messages.slice(offset, offset + limit);
 
     return NextResponse.json(
       {
         success: true,
         data: {
           clientId,
-          clientName: thread.clientName,
-          clientEmail: thread.clientEmail,
-          clientPhone: thread.clientPhone,
-          threadId: thread.id,
-          createdAt: thread.createdAt,
-          updatedAt: thread.updatedAt,
+          clientName: first.client_name,
+          threadId: `thread_${clientId}`,
+          createdAt: first.created_at,
+          updatedAt: rows[rows.length - 1].created_at,
           pagination: {
             limit,
             offset,
-            total: thread.messages.length,
-            count: messages.length,
+            total,
+            count: rows.length,
           },
           stats,
-          messages,
+          messages: rows.map((row) => ({
+            id: row.id,
+            sender: row.sender,
+            senderName: row.sender_name,
+            message: row.message,
+            timestamp: row.timestamp,
+            sentAt: row.created_at,
+            type: row.type || 'message',
+            status: row.status,
+            source: row.source,
+            metadata: row.metadata,
+          })),
         },
       },
       { status: 200 }
     );
   } catch (error) {
+    const errorMessage = getErrorMessage(error);
+
+    if (errorMessage.includes('Supabase not configured')) {
+      const { searchParams } = new URL(request.url);
+      const clientId = searchParams.get('clientId');
+
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Supabase ainda não configurado. Retornando histórico vazio temporariamente.',
+          data: {
+            clientId,
+            threadId: null,
+            messages: [],
+            stats: {
+              totalMessages: 0,
+              sentMessages: 0,
+              receivedMessages: 0,
+              failedMessages: 0,
+            },
+          },
+          warning: 'supabase_not_configured',
+        },
+        { status: 200 }
+      );
+    }
+
+    if (isMissingConversationTableError(error)) {
+      const { searchParams } = new URL(request.url);
+      const clientId = searchParams.get('clientId');
+
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Tabela de conversas ainda não criada no Supabase. Retornando histórico vazio temporariamente.',
+          data: {
+            clientId,
+            threadId: null,
+            messages: [],
+            stats: {
+              totalMessages: 0,
+              sentMessages: 0,
+              receivedMessages: 0,
+              failedMessages: 0,
+            },
+          },
+          warning: 'conversation_table_missing',
+        },
+        { status: 200 }
+      );
+    }
+
     console.error('[CONVERSATION] Error retrieving conversation:', error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
+        error: errorMessage || 'Internal server error',
       },
       { status: 500 }
     );
@@ -334,14 +314,14 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    if (conversationThreads[clientId]) {
-      const messageCount = conversationThreads[clientId].messages.length;
-      delete conversationThreads[clientId];
+    const deletedCount = await deleteConversationMessages(clientId);
+
+    if (deletedCount > 0) {
       return NextResponse.json(
         {
           success: true,
           message: 'Conversation deleted successfully',
-          deletedMessageCount: messageCount,
+          deletedMessageCount: deletedCount,
         },
         { status: 200 }
       );
