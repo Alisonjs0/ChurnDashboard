@@ -1,13 +1,36 @@
 import { getSupabaseServerClient } from '@/lib/supabase-server';
 
 const MESSAGES_TABLE = 'Churn Dashboard | Messages';
-const CLIENTS_TABLE = 'Churn Dashboard';
+const CLIENTS_TABLE = 'Clientes_Database';
+const CHURN_DASHBOARD_TABLE = 'ChurnDashboard';
 const WEBHOOK_EVENTS_TABLE = 'webhook_events';
 const CLIENTS_TABLE_CANDIDATES = [
+  // Primary attempts
   CLIENTS_TABLE,
+  'clientes_database',
+  'ClientesDatabase',
+  'dashClientes',
+  'dashclientes',
+  'DashClientes',
+  'dash_clientes',
+  'clientes',
+  'clients',
+  // Old fallbacks
+  'Churn Dashboard',
   'Churn Dashboarde',
   'churn_dashboard',
-  'churn_dashboarde',
+];
+const CHURN_DASHBOARD_TABLE_CANDIDATES = [
+  CHURN_DASHBOARD_TABLE,
+  'Churn Dashboard',
+  'Chrun Dashboard',  // Variação com typo do arquivo CSV
+  'ChrunDashboard',
+  'churndashboard',
+  'chrundashboard',
+  'churn_dashboard',
+  'chrun_dashboard',
+  'churn dashboard',
+  'chrun dashboard',
 ];
 
 type SenderType = 'support' | 'client' | 'system';
@@ -71,6 +94,117 @@ function getRowValue(row: Record<string, unknown>, keys: string[], fallback = ''
     if (value !== undefined && value !== null) return String(value);
   }
   return fallback;
+}
+
+function getRowNumberValue(row: Record<string, unknown>, keys: string[], fallback = 0) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value === undefined || value === null || value === '') continue;
+
+    const normalized = String(value).replace('%', '').replace(',', '.').trim();
+    const parsed = Number(normalized);
+
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  return fallback;
+}
+
+function normalizeLookupValue(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function extractChatIdentifier(value: string | null | undefined): string | null {
+  if (!value) return null;
+  
+  const normalized = normalizeLookupValue(value);
+  if (!normalized) return null;
+
+  const gUsMatch = normalized.match(/[0-9]{8,}@g\.us/);
+  if (gUsMatch?.[0]) return gUsMatch[0];
+
+  const digitsMatch = normalized.match(/[0-9]{8,}/);
+  if (digitsMatch?.[0]) return digitsMatch[0];
+
+  return normalized;
+}
+
+function getRowChatId(row: Record<string, unknown>) {
+  return getRowValue(row, ['chat_id', 'chatId', 'chatid', 'ChatID', 'chat', 'Dashboard', 'dashboard']);
+}
+
+function getClientDashboardValue(row: Record<string, unknown>) {
+  return getRowValue(row, ['Dashboard', 'dashboard', 'DASHBOARD', 'chat_id', 'chatId', 'ChatID', 'chat']);
+}
+
+function mapClientsBaseRows(clientsRows: Record<string, unknown>[]) {
+  return clientsRows.map((clientRow) => {
+    const dashboardKey = getClientDashboardValue(clientRow);
+    const fallbackClientName = getRowValue(clientRow, ['cliente', 'Cliente', 'name', 'client_name'], 'Sem nome');
+
+    return {
+      ...clientRow,
+      id: getRowValue(clientRow, ['id', 'Id', 'ID'], dashboardKey || createInternalId('client')),
+      cliente: fallbackClientName,
+      chat_id: dashboardKey,
+      status: getRowValue(clientRow, ['status'], ''),
+      score: getRowNumberValue(clientRow, ['score', 'riskLevel'], 0),
+      tendencia: getRowValue(clientRow, ['tendencia', 'trend'], ''),
+      squad: getRowValue(clientRow, ['squad'], 'Não atribuído'),
+      responsavel: getRowValue(clientRow, ['responsavel', 'actionOwner'], 'Não atribuído'),
+      detrator: getRowValue(clientRow, ['detrator', 'detractor'], 'Não identificado'),
+      evidencia: getRowValue(clientRow, ['evidencia', 'evidence'], 'Análise pendente'),
+      acaoRecomendada: getRowValue(clientRow, ['acaoRecomendada', 'acao_recomendada', 'actionDescription'], 'Aguardando análise inicial'),
+      data_evidencia: getRowValue(clientRow, ['data_evidencia', 'evidenceTimestamp']),
+      ultima_Mensagem: getRowValue(clientRow, ['ultima_Mensagem', 'lastMessage']),
+      created_at: getRowCreatedAt(clientRow),
+      email: getRowValue(clientRow, ['email', 'Email']),
+      phone: getRowValue(clientRow, ['phone', 'telefone', 'Phone']),
+      Dashboard: dashboardKey,
+    };
+  });
+}
+
+function getRowCreatedAt(row: Record<string, unknown>) {
+  return getRowValue(row, ['created_at', 'createdAt', 'data_criacao']);
+}
+
+function getLatestChurnRowsByChatId(rows: Record<string, unknown>[]) {
+  const latestRowsByChatId = new Map<string, Record<string, unknown>>();
+
+  for (const row of rows) {
+    const chatId = getRowChatId(row);
+    if (!chatId) continue;
+
+    const normalizedChatId = extractChatIdentifier(chatId);
+    if (!normalizedChatId) continue;
+
+    const current = latestRowsByChatId.get(normalizedChatId);
+
+    if (!current) {
+      latestRowsByChatId.set(normalizedChatId, row);
+      continue;
+    }
+
+    const currentTimestamp = Date.parse(getRowCreatedAt(current));
+    const candidateTimestamp = Date.parse(getRowCreatedAt(row));
+
+    if (Number.isNaN(currentTimestamp) || Number.isNaN(candidateTimestamp)) {
+      const currentCreatedAt = getRowCreatedAt(current);
+      const candidateCreatedAt = getRowCreatedAt(row);
+
+      if (candidateCreatedAt > currentCreatedAt) {
+        latestRowsByChatId.set(normalizedChatId, row);
+      }
+      continue;
+    }
+
+    if (candidateTimestamp > currentTimestamp) {
+      latestRowsByChatId.set(normalizedChatId, row);
+    }
+  }
+
+  return latestRowsByChatId;
 }
 
 function normalizeMessageRow(row: Record<string, unknown>) {
@@ -303,41 +437,129 @@ export async function deleteConversationMessages(clientId: string) {
 export async function getClientsFromChurnDashboard() {
   const supabase = getSupabaseServerClient();
 
-  for (const tableName of CLIENTS_TABLE_CANDIDATES) {
-    const { data, error } = await supabase
-      .from(tableName)
-      .select('*')
-      .order('created_at', { ascending: false });
+  console.log('[CHAT-STORAGE] Starting client search across candidates:', CLIENTS_TABLE_CANDIDATES);
 
-    if (!error) return data || [];
-    if (!isMissingRelationError(error)) throw error;
+  let clientsRows: Record<string, unknown>[] = [];
+  let clientsTableName = '';
+
+  for (const tableName of CLIENTS_TABLE_CANDIDATES) {
+    try {
+      console.log(`[CHAT-STORAGE] Attempting to load clients from table: "${tableName}"`);
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*');
+
+      if (!error) {
+        clientsRows = (data || []) as Record<string, unknown>[];
+        clientsTableName = tableName;
+        console.log(`[CHAT-STORAGE] ✅ SUCCESS! Clients loaded from table: "${tableName}" (${clientsRows.length} records)`);
+        break;
+      }
+
+      if (!isMissingRelationError(error)) {
+        console.error(`[CHAT-STORAGE] Non-recoverable error for clients table "${tableName}":`, error);
+        throw error;
+      }
+    } catch (err) {
+      console.error(`[CHAT-STORAGE] Exception trying clients table "${tableName}":`, err);
+      throw err;
+    }
   }
 
-  throw {
-    code: '42P01',
-    message: `relation not found for any candidate table: ${CLIENTS_TABLE_CANDIDATES.join(', ')}`,
-  };
+  if (!clientsTableName) {
+    throw {
+      code: '42P01',
+      message: `relation not found for any candidate table: ${CLIENTS_TABLE_CANDIDATES.join(', ')}`,
+    };
+  }
+
+  console.log('[CHAT-STORAGE] Starting churn table search across candidates:', CHURN_DASHBOARD_TABLE_CANDIDATES);
+
+  let churnRows: Record<string, unknown>[] = [];
+  let churnTableName = '';
+
+  for (const tableName of CHURN_DASHBOARD_TABLE_CANDIDATES) {
+    try {
+      console.log(`[CHAT-STORAGE] Attempting to load churn data from table: "${tableName}"`);
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*');
+
+      if (!error) {
+        churnRows = (data || []) as Record<string, unknown>[];
+        churnTableName = tableName;
+        console.log(`[CHAT-STORAGE] ✅ SUCCESS! Churn rows loaded from table: "${tableName}" (${churnRows.length} records)`);
+        break;
+      }
+
+      if (!isMissingRelationError(error)) {
+        console.error(`[CHAT-STORAGE] Non-recoverable error for churn table "${tableName}":`, error);
+        throw error;
+      }
+    } catch (err) {
+      console.error(`[CHAT-STORAGE] Exception trying churn table "${tableName}":`, err);
+      throw err;
+    }
+  }
+
+  if (!churnTableName) {
+    console.warn('[CHAT-STORAGE] ChurnDashboard table not found. Returning base clients from Clientes_Database.');
+    return mapClientsBaseRows(clientsRows);
+  }
+
+  if (churnRows.length === 0) {
+    console.warn('[CHAT-STORAGE] ChurnDashboard table is empty. Returning base clients from Clientes_Database.');
+    return mapClientsBaseRows(clientsRows);
+  }
+
+  const churnByChatId = getLatestChurnRowsByChatId(churnRows);
+
+  console.log(`[CHAT-STORAGE] Clientes: ${clientsRows.length} | Relatórios Churn: ${churnByChatId.size}`);
+
+  return clientsRows.map((clientRow) => {
+    const dashboardKey = getClientDashboardValue(clientRow);
+    const normalizedDashboardKey = dashboardKey ? extractChatIdentifier(dashboardKey) : null;
+    const churnRow = normalizedDashboardKey ? churnByChatId.get(normalizedDashboardKey) : undefined;
+
+    const fallbackClientName = getRowValue(clientRow, ['cliente', 'Cliente', 'name', 'client_name'], 'Sem nome');
+    const clientNameFromChurn = getRowValue(churnRow || {}, ['cliente', 'client_name', 'clientName', 'name']);
+
+    return {
+      ...clientRow,
+      id: getRowValue(clientRow, ['id', 'Id', 'ID'], dashboardKey || createInternalId('client')),
+      cliente: fallbackClientName,
+      cliente_churn: clientNameFromChurn || fallbackClientName,
+      chat_id: getRowChatId(churnRow || {}) || dashboardKey,
+      status: getRowValue(churnRow || {}, ['status'], getRowValue(clientRow, ['status'], '')),
+      score: getRowNumberValue(churnRow || {}, ['score', 'riskLevel', 'risco'], getRowNumberValue(clientRow, ['score', 'riskLevel'], 0)),
+      tendencia: getRowValue(churnRow || {}, ['tendencia', 'trend'], getRowValue(clientRow, ['tendencia', 'trend'], '')),
+      squad: getRowValue(churnRow || {}, ['squad'], getRowValue(clientRow, ['squad'], 'Não atribuído')),
+      responsavel: getRowValue(churnRow || {}, ['responsavel', 'actionOwner'], getRowValue(clientRow, ['responsavel', 'actionOwner'], 'Não atribuído')),
+      detrator: getRowValue(churnRow || {}, ['detrator', 'detractor'], getRowValue(clientRow, ['detrator', 'detractor'], 'Não identificado')),
+      evidencia: getRowValue(churnRow || {}, ['evidencia', 'evidence'], getRowValue(clientRow, ['evidencia', 'evidence'], 'Análise pendente')),
+      acaoRecomendada: getRowValue(
+        churnRow || {},
+        ['acaoRecomendada', 'acao_recomendada', 'actionDescription'],
+        getRowValue(clientRow, ['acaoRecomendada', 'actionDescription'], 'Aguardando análise inicial')
+      ),
+      data_evidencia: getRowValue(churnRow || {}, ['data_evidencia', 'evidenceTimestamp'], getRowValue(clientRow, ['data_evidencia'], '')),
+      ultima_Mensagem: getRowValue(churnRow || {}, ['ultima_Mensagem', 'lastMessage'], getRowValue(clientRow, ['ultima_Mensagem'], '')),
+      created_at: getRowCreatedAt(churnRow || {}) || getRowCreatedAt(clientRow),
+      email: getRowValue(clientRow, ['email', 'Email']),
+      phone: getRowValue(clientRow, ['phone', 'telefone', 'Phone']),
+      Dashboard: dashboardKey,
+    };
+  });
 }
 
 export async function getClientFromChurnDashboard(clientId: string) {
-  const supabase = getSupabaseServerClient();
+  const clients = await getClientsFromChurnDashboard();
+  const match = clients.find((row) => {
+    const rowId = getRowValue(row as Record<string, unknown>, ['id', 'Id', 'ID']);
+    return rowId === clientId;
+  });
 
-  for (const tableName of CLIENTS_TABLE_CANDIDATES) {
-    const { data, error } = await supabase
-      .from(tableName)
-      .select('*')
-      .eq('id', clientId)
-      .single();
-
-    if (!error) return data || null;
-    if (error.code === 'PGRST116') return null;
-    if (!isMissingRelationError(error)) throw error;
-  }
-
-  throw {
-    code: '42P01',
-    message: `relation not found for any candidate table: ${CLIENTS_TABLE_CANDIDATES.join(', ')}`,
-  };
+  return match || null;
 }
 
 export async function addWebhookEvent(input: WebhookEventInput) {

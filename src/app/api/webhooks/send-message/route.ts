@@ -143,7 +143,9 @@ export async function POST(request: NextRequest) {
       });
 
       if (!webhookResponse.ok) {
-        await updateConversationMessage(conversationRecord.id, {
+        console.warn('[SEND-MESSAGE] Webhook returned non-OK status:', webhookResponse.status);
+        // Update message status non-blocking (failure to update doesn't stop response)
+        updateConversationMessage(conversationRecord.id, {
           status: 'failed',
           metadata: {
             flow: 'send-message',
@@ -151,18 +153,20 @@ export async function POST(request: NextRequest) {
             webhookStatus: webhookResponse.status,
             error: `Webhook returned status ${webhookResponse.status}`,
           },
-        });
+        }).catch((err) => console.error('[SEND-MESSAGE] Failed to update message status:', err));
       } else {
-        await updateConversationMessage(conversationRecord.id, {
+        // Update message status non-blocking
+        updateConversationMessage(conversationRecord.id, {
           status: 'sent',
           metadata: {
             flow: 'send-message',
             webhookResult,
             webhookStatus: webhookResponse.status,
           },
-        });
+        }).catch((err) => console.error('[SEND-MESSAGE] Failed to update message status:', err));
       }
 
+      // Always return 200 - message is already persisted
       return NextResponse.json(
         {
           success: true,
@@ -186,28 +190,37 @@ export async function POST(request: NextRequest) {
       const isTimeout = webhookError instanceof Error && webhookError.name === 'AbortError';
       const errorMessage = webhookError instanceof Error ? webhookError.message : String(webhookError);
 
-      await updateWebhookEvent(webhookEvent.id, {
+      // Update webhook event non-blocking
+      addWebhookEvent({
+        type: 'error',
+        clientId,
+        clientName: clientName || 'Unknown',
+        endpoint: webhookUrl,
         status: isTimeout ? 'timeout' : 'error',
         error: errorMessage,
-      });
+        messageId: conversationRecord.id,
+      }).catch((err) => console.error('[SEND-MESSAGE] Failed to log webhook error:', err));
 
-      await updateConversationMessage(conversationRecord.id, {
-        status: 'failed',
+      // Update message status non-blocking
+      updateConversationMessage(conversationRecord.id, {
+        status: 'sent', // Message is persisted, even if webhook failed
         metadata: {
           flow: 'send-message',
-          warning: isTimeout ? 'timeout' : 'error',
-          error: errorMessage,
+          webhookFailed: true,
+          webhookError: isTimeout ? 'timeout' : 'error',
+          webhookErrorMessage: errorMessage,
         },
-      });
+      }).catch((err) => console.error('[SEND-MESSAGE] Failed to update message:', err));
 
+      // Always return 200 - message is already persisted
       return NextResponse.json(
         {
           success: true,
           message: isTimeout
             ? 'Message received. Webhook timeout (>10s). Check n8n connection.'
             : 'Message received and stored. External webhook delivery failed.',
-          warning: isTimeout ? 'timeout' : 'error',
-          error: errorMessage,
+          warning: isTimeout ? 'webhook_timeout' : 'webhook_error',
+          webhookError: errorMessage,
           data: {
             clientId,
             clientName,

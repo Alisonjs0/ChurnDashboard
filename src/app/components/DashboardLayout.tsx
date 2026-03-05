@@ -5,12 +5,66 @@ import ClientSidebar, { Client } from '@/app/components/ClientSidebar';
 import MainDashboard from '@/app/components/MainDashboard';
 import CriticalRiskCard from '@/app/components/CriticalRiskCard';
 import ClientChat from '@/app/components/ClientChat';
-import { clientsData, ClientWithContact } from '@/app/data/clients';
+import { ClientWithContact } from '@/app/data/clients';
+
+type ClientStatus = 'CRÍTICO' | 'ALTO' | 'MÉDIO' | 'BAIXO';
+type ClientTrend = 'Piorando' | 'Estável' | 'Melhorando';
+
+type DashboardClient = ClientWithContact & {
+  chatId?: string;
+  trend?: ClientTrend;
+  squad?: string;
+  detractor?: string;
+  evidence?: string;
+  evidenceTimestamp?: string;
+  actionOwner?: string;
+  actionDescription?: string;
+  data_evidencia?: string;
+  ultima_Mensagem?: string;
+  cliente_churn?: string;
+};
+
+function parseRiskLevel(value: unknown) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace('%', '').replace(',', '.').trim());
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function statusFromRiskLevel(riskLevel: number): ClientStatus {
+  if (riskLevel >= 75) return 'CRÍTICO';
+  if (riskLevel >= 50) return 'ALTO';
+  if (riskLevel >= 25) return 'MÉDIO';
+  return 'BAIXO';
+}
+
+function normalizeStatus(rawStatus: unknown, riskLevel: number): ClientStatus {
+  const value = String(rawStatus || '').toUpperCase();
+
+  if (value.includes('CRÍTICO') || value.includes('CRITICO')) return 'CRÍTICO';
+  if (value.includes('ALTO')) return 'ALTO';
+  if (value.includes('MÉDIO') || value.includes('MEDIO')) return 'MÉDIO';
+  if (value.includes('BAIXO')) return 'BAIXO';
+
+  return statusFromRiskLevel(riskLevel);
+}
+
+function normalizeTrend(rawTrend: unknown): ClientTrend {
+  const value = String(rawTrend || '').toLowerCase();
+
+  if (value.includes('piora')) return 'Piorando';
+  if (value.includes('melhor')) return 'Melhorando';
+  if (value.includes('estáv') || value.includes('estav')) return 'Estável';
+
+  return 'Estável';
+}
 
 const DashboardLayout: React.FC = () => {
   // Começa com null para mostrar dashboard geral
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  const [apiClients, setApiClients] = useState<Client[]>([]);
+  const [apiClients, setApiClients] = useState<DashboardClient[]>([]);
   const [isLoadingClients, setIsLoadingClients] = useState(false);
 
   // Carregar clientes do Supabase via API
@@ -20,13 +74,39 @@ const DashboardLayout: React.FC = () => {
       .then(res => res.json())
       .then(data => {
         if (data.success && Array.isArray(data.data)) {
-          // Mapear dados do Supabase para formato do Cliente
-          const mappedClients = data.data.map((item: any) => ({
-            id: item.id || String(item.id),
-            name: item.clienta || item.client_name || 'Sem nome',
-            status: (item.status || 'BAIXO') as 'CRÍTICO' | 'ALTO' | 'MÉDIO' | 'BAIXO',
-            riskLevel: item.score ? parseInt(item.score) : 50,
-          }));
+          const mappedClients: DashboardClient[] = data.data.map((item: Record<string, unknown>) => {
+            const riskLevel = parseRiskLevel(item.score ?? item.riskLevel ?? item.risco);
+            // Se não há score definido (0), marcar como BAIXO em vez de CRÍTICO
+            const status = riskLevel === 0 ? 'BAIXO' : normalizeStatus(item.status, riskLevel);
+
+            return {
+              id: String(item.id ?? item.Id ?? item.ID ?? ''),
+              name: String(item.cliente ?? item.Cliente ?? item.client_name ?? item.name ?? 'Sem nome'),
+              status,
+              riskLevel,
+              email: item.email ? String(item.email) : undefined,
+              phone: item.phone ? String(item.phone) : undefined,
+              chatId: item.chat_id ? String(item.chat_id) : item.chatId ? String(item.chatId) : undefined,
+              lastMessage: item.ultima_Mensagem ? String(item.ultima_Mensagem) : item.lastMessage ? String(item.lastMessage) : item.evidencia ? String(item.evidencia) : undefined,
+              lastMessageTime: item.data_evidencia ? String(item.data_evidencia) : item.lastMessageTime ? String(item.lastMessageTime) : undefined,
+              trend: normalizeTrend(item.tendencia ?? item.trend),
+              squad: item.squad ? String(item.squad) : undefined,
+              detractor: item.detrator ? String(item.detrator) : item.detractor ? String(item.detractor) : undefined,
+              evidence: item.evidencia ? String(item.evidencia) : item.evidence ? String(item.evidence) : undefined,
+              evidenceTimestamp: item.data_evidencia ? String(item.data_evidencia) : item.created_at ? String(item.created_at) : item.evidenceTimestamp ? String(item.evidenceTimestamp) : undefined,
+              actionOwner: item.responsavel ? String(item.responsavel) : item.actionOwner ? String(item.actionOwner) : undefined,
+              actionDescription: item.acaoRecomendada
+                ? String(item.acaoRecomendada)
+                : item.actionDescription
+                ? String(item.actionDescription)
+                : undefined,
+              data_evidencia: item.data_evidencia ? String(item.data_evidencia) : undefined,
+              ultima_Mensagem: item.ultima_Mensagem ? String(item.ultima_Mensagem) : undefined,
+              cliente_churn: item.cliente_churn ? String(item.cliente_churn) : undefined,
+            };
+          }).filter((client: DashboardClient) => client.id);
+
+          console.log('[DashboardLayout] Clients loaded from API:', mappedClients.length);
           setApiClients(mappedClients);
         }
       })
@@ -34,108 +114,33 @@ const DashboardLayout: React.FC = () => {
       .finally(() => setIsLoadingClients(false));
   }, []);
 
-  // Usar clientes do API se disponíveis, senão usar dados mock
-  const clients = apiClients.length > 0 ? apiClients : clientsData.map(c => ({
-    id: c.id,
-    name: c.name,
-    status: c.status as 'CRÍTICO' | 'ALTO' | 'MÉDIO' | 'BAIXO',
-    riskLevel: c.riskLevel,
-  }));
+  // Listagem deve vir apenas da tabela Clientes_Database via API
+  const clients = apiClients;
 
+  // Buscar cliente selecionado nos dados corretos (API ou mock)
   const selectedClient = selectedClientId 
-    ? clientsData.find((c) => c.id === selectedClientId) as ClientWithContact | undefined
+    ? (clients.find((c) => c.id === selectedClientId) as DashboardClient | undefined)
     : undefined;
 
-  // Dados detalhados para cada cliente
-  const clientDetailsMap: Record<
-    string,
-    {
-      squad: string;
-      detractor: string;
-      evidence: string;
-      evidenceTimestamp: string;
-      actionOwner: string;
-      actionDescription: string;
-      trend: 'Piorando' | 'Estável' | 'Melhorando';
-    }
-  > = {
-    '1': {
-      squad: 'MCI PLUS',
-      detractor: 'Inadimplência/Bloqueio',
-      evidence: 'Boa tarde pessoal, mais um pra subir',
-      evidenceTimestamp: '23/02/2026',
-      actionOwner: 'Vinícius Dino',
-      actionDescription: 'Create and share updated image drive by EOD',
-      trend: 'Piorando',
-    },
-    '2': {
-      squad: 'TechFlow Team',
-      detractor: 'Redução de Uso/Engagement',
-      evidence: 'Plataforma com baixa adoção nos últimos 30 dias',
-      evidenceTimestamp: '26/02/2026',
-      actionOwner: 'Ana Silva',
-      actionDescription: 'Agendar reunião de revisão de estratégia com stakeholders',
-      trend: 'Piorando',
-    },
-    '3': {
-      squad: 'GlobalPay Support',
-      detractor: 'Suporte/Problemas Técnicos',
-      evidence: 'Múltiplos tickets abertos, TTR acima da SLA',
-      evidenceTimestamp: '25/02/2026',
-      actionOwner: 'Carlos Mendes',
-      actionDescription: 'Escalar para time técnico sênior e realizar pair debugging',
-      trend: 'Piorando',
-    },
-    '4': {
-      squad: 'CloudVision Ops',
-      detractor: 'Performance/Latência',
-      evidence: 'Degradação de performance em horários de pico',
-      evidenceTimestamp: '24/02/2026',
-      actionOwner: 'Marina Costa',
-      actionDescription: 'Realizar análise de infraestrutura e otimização',
-      trend: 'Estável',
-    },
-    '5': {
-      squad: 'DataStream Analytics',
-      detractor: 'Preço/ROI',
-      evidence: 'Cliente questionando justificativa de valor',
-      evidenceTimestamp: '26/02/2026',
-      actionOwner: 'Roberto Santos',
-      actionDescription: 'Apresentar novo cases de sucesso e métricas de ROI',
-      trend: 'Estável',
-    },
-    '6': {
-      squad: 'SecureNet Team',
-      detractor: 'Integração',
-      evidence: 'Integração com sistemas legados em progresso',
-      evidenceTimestamp: '25/02/2026',
-      actionOwner: 'Patricia Oliveira',
-      actionDescription: 'Finalizar documentação técnica e treinamento',
-      trend: 'Melhorando',
-    },
-    '7': {
-      squad: 'InnovateLabs Dev',
-      detractor: 'Feature Requests',
-      evidence: 'Cliente com backlog de features atendidas',
-      evidenceTimestamp: '20/02/2026',
-      actionOwner: 'Lucas Ferreira',
-      actionDescription: 'Manter momentum com updates mensais de features',
-      trend: 'Melhorando',
-    },
-    '8': {
-      squad: 'PowerTech Enterprise',
-      detractor: 'Nenhum',
-      evidence: 'Cliente em excelente situação, referenciador ativo',
-      evidenceTimestamp: '18/02/2026',
-      actionOwner: 'Fernanda Lima',
-      actionDescription: 'Manter relacionamento estratégico e explorar upsell',
-      trend: 'Melhorando',
-    },
-  };
-
   const clientDetails = selectedClientId && selectedClient
-    ? clientDetailsMap[selectedClientId]
-    : null;
+    ? {
+        squad: selectedClient.squad || 'Não atribuído',
+        detractor: selectedClient.detractor || 'Não identificado',
+        evidence: selectedClient.evidence || 'Análise pendente',
+        evidenceTimestamp: selectedClient.evidenceTimestamp || new Date().toLocaleDateString('pt-BR'),
+        actionOwner: selectedClient.actionOwner || 'Não atribuído',
+        actionDescription: selectedClient.actionDescription || 'Aguardando análise inicial',
+        trend: selectedClient.trend || 'Estável' as const,
+      }
+    : {
+        squad: 'Não atribuído',
+        detractor: 'Não identificado',
+        evidence: 'Análise pendente',
+        evidenceTimestamp: new Date().toLocaleDateString('pt-BR'),
+        actionOwner: 'Não atribuído',
+        actionDescription: 'Aguardando análise inicial',
+        trend: 'Estável' as const,
+      };
 
   return (
     <div className="flex h-screen w-screen bg-slate-950 overflow-hidden">
@@ -152,21 +157,21 @@ const DashboardLayout: React.FC = () => {
       <div className="flex flex-1 min-w-0">
         {/* Risk Card Section */}
         <div className="flex-1 min-w-0 overflow-auto">
-          {selectedClient && clientDetails ? (
+          {selectedClient ? (
             <CriticalRiskCard
               clientName={selectedClient.name}
               riskLevel={selectedClient.riskLevel}
               status={selectedClient.status}
-              trend={clientDetails.trend}
-              squad={clientDetails.squad}
-              detractor={clientDetails.detractor}
-              evidence={clientDetails.evidence}
-              evidenceTimestamp={clientDetails.evidenceTimestamp}
-              actionOwner={clientDetails.actionOwner}
-              actionDescription={clientDetails.actionDescription}
+              trend={clientDetails?.trend || 'Estável'}
+              squad={clientDetails?.squad || 'Não atribuído'}
+              detractor={clientDetails?.detractor || 'Não identificado'}
+              evidence={clientDetails?.evidence || 'Análise pendente'}
+              evidenceTimestamp={clientDetails?.evidenceTimestamp || new Date().toLocaleDateString('pt-BR')}
+              actionOwner={clientDetails?.actionOwner || 'Não atribuído'}
+              actionDescription={clientDetails?.actionDescription || 'Aguardando análise inicial'}
             />
           ) : (
-            <MainDashboard clients={clientsData} />
+            <MainDashboard clients={clients} />
           )}
         </div>
 
