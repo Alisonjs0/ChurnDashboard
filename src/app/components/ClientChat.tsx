@@ -173,6 +173,26 @@ const ClientChat: React.FC<ClientChatProps> = ({
       msg.senderName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const formatMessageTime = (value?: string) => {
+    if (!value) return '';
+
+    const parsedDate = new Date(value);
+    if (!Number.isNaN(parsedDate.getTime())) {
+      return parsedDate.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+
+    const timeMatch = value.match(/(\d{1,2}):(\d{2})/);
+    if (timeMatch) {
+      const [, hourRaw, minuteRaw] = timeMatch;
+      return `${hourRaw.padStart(2, '0')}:${minuteRaw}`;
+    }
+
+    return value;
+  };
+
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
 
@@ -293,11 +313,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
                   {message.senderName.split(' - ')[0]}
                 </p>
                 <p className="text-sm leading-relaxed">{message.message}</p>
-                <p className="text-slate-400 text-xs">{message.timestamp}</p>
-                <p className="text-slate-400 text-[10px] leading-tight">
-                  {`status: ${message.status || 'n/a'} • origem: ${message.source || 'n/a'}`}
-                  {typeof message.webhookStatus === 'number' ? ` • webhook: ${message.webhookStatus}` : ''}
-                </p>
+                <p className="text-slate-400 text-xs">{formatMessageTime(message.timestamp)}</p>
               </div>
             </div>
           ))
