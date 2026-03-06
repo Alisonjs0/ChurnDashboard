@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
@@ -18,6 +18,37 @@ import { Client } from './ClientSidebar';
 
 interface MainDashboardProps {
   clients: Client[];
+}
+
+type RecentActivity = {
+  id: string;
+  client: string;
+  action: string;
+  time: string;
+  type: 'alert' | 'assignment' | 'meeting' | 'analysis';
+};
+
+function parseActivityTimestamp(value?: string) {
+  if (!value) return 0;
+
+  const directDate = new Date(value);
+  if (!Number.isNaN(directDate.getTime())) return directDate.getTime();
+
+  const brDateMatch = value.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (brDateMatch) {
+    const [, dayRaw, monthRaw, yearRaw, hourRaw = '0', minuteRaw = '0', secondRaw = '0'] = brDateMatch;
+    const year = yearRaw.length === 2 ? Number(`20${yearRaw}`) : Number(yearRaw);
+    const month = Number(monthRaw) - 1;
+    const day = Number(dayRaw);
+    const hour = Number(hourRaw);
+    const minute = Number(minuteRaw);
+    const second = Number(secondRaw);
+
+    const parsed = new Date(year, month, day, hour, minute, second);
+    if (!Number.isNaN(parsed.getTime())) return parsed.getTime();
+  }
+
+  return 0;
 }
 
 const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
@@ -45,43 +76,46 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
     { status: 'BAIXO', count: lowRiskClients, color: 'bg-emerald-500' },
   ];
 
-  const recentActivities = [
-    {
-      id: 1,
-      client: '(MCI PLUS) AEG MEDIA / Nordeste Clube',
-      action: 'Status atualizado para CRÍTICO - Problema técnico com Meta',
-      time: '26/02/2026 08:11',
-      type: 'alert',
-    },
-    {
-      id: 2,
-      client: 'Belloscar <> AEG',
-      action: 'Aguardando liberação de número para API - Ação: Gabriel',
-      time: '26/02/2026 08:13',
-      type: 'assignment',
-    },
-    {
-      id: 3,
-      client: 'Auto X Veículos',
-      action: 'Cliente solicitou atualização do Venda.IA',
-      time: '26/02/2026 08:33',
-      type: 'meeting',
-    },
-    {
-      id: 4,
-      client: 'Primos Protege',
-      action: 'Pendente: Envio de link de reunião',
-      time: '26/02/2026 09:11',
-      type: 'analysis',
-    },
-    {
-      id: 5,
-      client: '(MCI PLUS) Auto Energia Baterias',
-      action: 'CRÍTICO - Campanha paralisada por inadimplência',
-      time: '18/02/2026 15:09',
-      type: 'alert',
-    },
-  ];
+  const recentActivities = useMemo<RecentActivity[]>(() => {
+    return [...clients]
+      .sort((a, b) => parseActivityTimestamp(b.lastMessageTime) - parseActivityTimestamp(a.lastMessageTime))
+      .slice(0, 8)
+      .map((client) => {
+        const hasOwner = Boolean(client.actionOwner && client.actionOwner.trim());
+        const type: RecentActivity['type'] = client.status === 'CRÍTICO' || client.status === 'ALTO'
+          ? 'alert'
+          : hasOwner
+          ? 'assignment'
+          : 'analysis';
+
+        return {
+          id: client.id,
+          client: client.name,
+          action:
+            client.lastMessage ||
+            client.actionDescription ||
+            (hasOwner
+              ? `Ação pendente com ${client.actionOwner}`
+              : 'Sem atividade registrada recentemente'),
+          time: client.lastMessageTime || 'Sem data',
+          type,
+        };
+      });
+  }, [clients]);
+
+  const getActivityBadge = (type: string) => {
+    if (type === 'alert') return 'bg-red-500/20 text-red-300 border-red-500/40';
+    if (type === 'assignment') return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40';
+    if (type === 'meeting') return 'bg-violet-500/20 text-violet-300 border-violet-500/40';
+    return 'bg-amber-500/20 text-amber-300 border-amber-500/40';
+  };
+
+  const getActivityTypeLabel = (type: string) => {
+    if (type === 'alert') return 'Alerta';
+    if (type === 'assignment') return 'Atribuicao';
+    if (type === 'meeting') return 'Reuniao';
+    return 'Analise';
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-4 md:p-6">
@@ -304,7 +338,7 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/80 rounded-xl p-6 backdrop-blur-sm border border-slate-700/30">
+          <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/80 rounded-xl p-4 backdrop-blur-sm border border-slate-700/30">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-blue-500/20 rounded-lg">
@@ -314,19 +348,33 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
               </div>
             </div>
 
-            <div className="space-y-3">
-              {recentActivities.map((activity) => (
-                <div key={activity.id} className="p-3 rounded-lg bg-slate-900/60 border border-slate-700/20 hover:border-slate-700/40 transition-colors">
-                  <p className="text-sm font-semibold text-slate-100 mb-1">
-                    {activity.client}
-                  </p>
-                  <p className="text-xs text-slate-300 mb-1">{activity.action}</p>
-                  <p className="text-xs text-slate-400">{activity.time}</p>
+            <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+              {recentActivities.length === 0 ? (
+                <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-700/30 text-sm text-slate-300">
+                  Nenhuma atividade recente encontrada no banco de dados.
+                </div>
+              ) : recentActivities.map((activity) => (
+                <div key={activity.id} className="rounded-lg bg-slate-900/60 border border-slate-700/20 hover:border-slate-600/50 transition-all">
+                  <div className="flex items-stretch">
+                    <div className="w-1 rounded-l-lg bg-slate-600/40" />
+                    <div className="p-3 flex-1">
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <p className="text-sm font-semibold text-slate-100 truncate">{activity.client}</p>
+                        <span className={`text-[11px] px-2 py-0.5 rounded border font-semibold uppercase tracking-wide ${getActivityBadge(activity.type)}`}>
+                          {getActivityTypeLabel(activity.type)}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-200 leading-relaxed mb-2">{activity.action}</p>
+
+                      <p className="text-[11px] text-slate-400">{activity.time}</p>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
 
-            <button className="w-full mt-4 px-4 py-2 bg-slate-700/50 hover:bg-slate-700/70 rounded-lg text-sm font-medium text-slate-200 transition-colors border border-slate-600/30">
+            <button className="w-full mt-4 px-4 py-2.5 bg-slate-700/50 hover:bg-slate-700/70 rounded-lg text-sm font-medium text-slate-200 transition-colors border border-slate-600/30">
               Ver Todas as Atividades
             </button>
           </div>
