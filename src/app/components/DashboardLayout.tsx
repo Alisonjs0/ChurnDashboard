@@ -209,7 +209,7 @@ const DashboardLayout: React.FC = () => {
               actionDescription={clientDetails?.actionDescription || 'Aguardando análise inicial'}
             />
           ) : (
-            <MainDashboard clients={clients} />
+            <MainDashboard clients={clients} onSelectClient={setSelectedClientId} />
           )}
         </div>
 

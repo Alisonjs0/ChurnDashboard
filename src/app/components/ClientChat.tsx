@@ -259,7 +259,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
 
         {/* Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-3 h-3 text-slate-400" />
+          <Search className="absolute right-3 top-1.5 w-4 h-4 text-slate-400" />
           <input
             type="text"
             placeholder="Buscar..."

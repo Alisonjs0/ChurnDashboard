@@ -174,7 +174,7 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
       <div className="max-w-5xl mx-auto">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
-            Gestão de Risco de Churn
+            Cabuet.ia
           </h1>
           <div className="text-right">
             <p className="text-xs text-slate-300">Data do Relatório</p>

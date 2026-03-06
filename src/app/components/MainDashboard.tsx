@@ -18,6 +18,7 @@ import { Client } from './ClientSidebar';
 
 interface MainDashboardProps {
   clients: Client[];
+  onSelectClient?: (clientId: string) => void;
 }
 
 type RecentActivity = {
@@ -51,7 +52,7 @@ function parseActivityTimestamp(value?: string) {
   return 0;
 }
 
-const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
+const MainDashboard: React.FC<MainDashboardProps> = ({ clients, onSelectClient }) => {
   const [hoveredSlice, setHoveredSlice] = useState<number | null>(null);
 
   // Calcular métricas
@@ -122,7 +123,7 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl md:text-5xl font-bold text-white mb-2 tracking-tight">
-            Dashboard de Gestão de Churn
+            Dashboard
           </h1>
           <p className="text-slate-300">
             Visão geral da saúde dos clientes e principais indicadores
@@ -348,13 +349,18 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
               </div>
             </div>
 
-            <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
               {recentActivities.length === 0 ? (
                 <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-700/30 text-sm text-slate-300">
                   Nenhuma atividade recente encontrada no banco de dados.
                 </div>
               ) : recentActivities.map((activity) => (
-                <div key={activity.id} className="rounded-lg bg-slate-900/60 border border-slate-700/20 hover:border-slate-600/50 transition-all">
+                <button
+                  key={activity.id}
+                  onClick={() => onSelectClient?.(activity.id)}
+                  className="w-full text-left rounded-lg bg-slate-900/60 border border-slate-700/20 hover:border-slate-600/50 hover:bg-slate-900/80 transition-all cursor-pointer"
+                  title={`Abrir chat com ${activity.client}`}
+                >
                   <div className="flex items-stretch">
                     <div className="w-1 rounded-l-lg bg-slate-600/40" />
                     <div className="p-3 flex-1">
@@ -370,13 +376,9 @@ const MainDashboard: React.FC<MainDashboardProps> = ({ clients }) => {
                       <p className="text-[11px] text-slate-400">{activity.time}</p>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
-
-            <button className="w-full mt-4 px-4 py-2.5 bg-slate-700/50 hover:bg-slate-700/70 rounded-lg text-sm font-medium text-slate-200 transition-colors border border-slate-600/30">
-              Ver Todas as Atividades
-            </button>
           </div>
         </div>
 
