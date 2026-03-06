@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { AlertCircle, TrendingUp, AlertTriangle, Clock, CheckCircle, AlertOctagon } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Clock, CheckCircle, AlertOctagon } from 'lucide-react';
 
 export interface CriticalRiskCardProps {
   clientName: string;
@@ -28,8 +28,9 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
   actionOwner,
   actionDescription,
 }) => {
+  const normalizedRiskLevel = Math.max(0, Math.min(100, riskLevel));
   const circumference = 2 * Math.PI * 45;
-  const strokeDashoffset = circumference - (riskLevel / 100) * circumference;
+  const strokeDashoffset = circumference - (normalizedRiskLevel / 100) * circumference;
 
   const statusColors: Record<string, string> = {
     CRÍTICO: 'from-red-600 to-red-700',
@@ -62,6 +63,16 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
 
   const { Icon: StatusIcon, color: iconBgColor } = getStatusIcon();
 
+  const statusFromRiskLevel = (level: number): CriticalRiskCardProps['status'] => {
+    if (level >= 75) return 'CRÍTICO';
+    if (level >= 50) return 'ALTO';
+    if (level >= 25) return 'MÉDIO';
+    return 'BAIXO';
+  };
+
+  const derivedStatus = statusFromRiskLevel(normalizedRiskLevel);
+  const hasStatusMismatch = derivedStatus !== status;
+
   // Dynamic gauge colors based on risk level
   const getGaugeColors = (level: number) => {
     if (level <= 25) {
@@ -91,7 +102,38 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
     }
   };
 
-  const gaugeColors = getGaugeColors(riskLevel);
+  const getRiskLevelDescriptor = (level: number) => {
+    if (level >= 75) {
+      return {
+        label: 'Risco crítico',
+        hint: 'Probabilidade alta de churn, tratar com prioridade máxima.',
+        badgeClass: 'bg-red-600/20 text-red-300 border-red-500/40',
+      };
+    }
+    if (level >= 50) {
+      return {
+        label: 'Risco alto',
+        hint: 'Sinais relevantes de churn, exige plano de contenção.',
+        badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+      };
+    }
+    if (level >= 25) {
+      return {
+        label: 'Risco moderado',
+        hint: 'Existem alertas, acompanhar evolução e próximos gatilhos.',
+        badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+      };
+    }
+
+    return {
+      label: 'Risco baixo',
+      hint: 'Sem sinais críticos no momento, manter monitoramento.',
+      badgeClass: 'bg-green-500/20 text-green-300 border-green-500/40',
+    };
+  };
+
+  const gaugeColors = getGaugeColors(normalizedRiskLevel);
+  const riskDescriptor = getRiskLevelDescriptor(normalizedRiskLevel);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-3 md:p-5">
@@ -130,21 +172,19 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
       `}</style>
 
       <div className="max-w-5xl mx-auto">
-        {/* Header - Compacto */}
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
             Gestão de Risco de Churn
           </h1>
           <div className="text-right">
-            <p className="text-xs text-slate-400">Data do Relatório</p>
+            <p className="text-xs text-slate-300">Data do Relatório</p>
             <p className="text-sm font-semibold text-white">
               {new Date().toLocaleDateString('pt-BR')}
             </p>
           </div>
         </div>
 
-        {/* Main Card - Compacto */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden">
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl shadow-lg overflow-hidden">
           {/* Status Bar - Reduzido */}
           <div
             className={`bg-gradient-to-r ${statusColors[status]} p-4 flex items-center justify-between`}
@@ -166,9 +206,8 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
             </div>
           </div>
 
-          {/* Content Grid - Compacto */}
-          <div className="p-4 md:p-5">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5 mb-4 md:mb-5">
+          <div className="p-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
               {/* Health Score Gauge - Menor */}
               <div className="lg:col-span-1 flex flex-col items-center justify-center">
                 <div className="relative w-36 h-36 mb-4">
@@ -206,14 +245,28 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
                   </svg>
                   {/* Center text */}
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className={`text-4xl font-bold ${gaugeColors.textColor}`}>{riskLevel}%</span>
-                    <span className="text-xs text-slate-400 mt-1">Risk Level</span>
+                    <span className={`text-4xl font-bold ${gaugeColors.textColor}`}>{normalizedRiskLevel}%</span>
+                    <span className="text-xs text-slate-300 mt-1">Nível de Risco</span>
                   </div>
                 </div>
 
-                {/* Trend Indicator - Compacto */}
-                <div className="bg-slate-700/50 rounded-lg p-3 w-full text-center border border-slate-600">
-                  <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">Tendência</p>
+                <div className="w-full mb-4 text-center">
+                  <div className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${riskDescriptor.badgeClass}`}>
+                    {riskDescriptor.label}
+                  </div>
+                  <p className="text-xs text-slate-300 mt-2 px-2">
+                    Quanto maior o percentual, maior o risco de churn.
+                  </p>
+                  <p className="text-xs text-slate-200 mt-1 px-2">{riskDescriptor.hint}</p>
+                  {hasStatusMismatch && (
+                    <p className="text-xs text-amber-300 mt-2 px-2">
+                      Score indica <strong>{derivedStatus}</strong>, mas status atual está como <strong>{status}</strong>.
+                    </p>
+                  )}
+                </div>
+
+                <div className="bg-slate-900/60 rounded-lg p-4 w-full text-center">
+                  <p className="text-xs text-slate-300 uppercase tracking-widest mb-2">Tendência</p>
                   <div className="flex items-center justify-center gap-2">
                     <span
                       className={`text-2xl font-bold ${
@@ -229,21 +282,18 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
 
               {/* Data Points and Evidence - Compacto */}
               <div className="lg:col-span-2">
-                {/* Data Points - Grid menor */}
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  {/* Squad */}
-                  <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-3 hover:border-amber-500/50 transition-colors">
-                    <p className="text-xs text-slate-400 uppercase tracking-widest mb-2 font-semibold">
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-slate-900/60 rounded-lg p-4">
+                    <p className="text-xs text-slate-300 uppercase tracking-widest mb-2 font-semibold">
                       Squad
                     </p>
                     <p className="text-base font-bold text-white break-words">{squad}</p>
                   </div>
 
-                  {/* Detractor */}
-                  <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-3 hover:border-red-500/50 transition-colors">
+                  <div className="bg-slate-900/60 rounded-lg p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <AlertTriangle className="w-3 h-3 text-amber-500" />
-                      <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">
+                      <AlertTriangle className="w-3 h-3 text-amber-400" />
+                      <p className="text-xs text-slate-300 uppercase tracking-widest font-semibold">
                         Detrator
                       </p>
                     </div>
@@ -251,20 +301,19 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
                   </div>
                 </div>
 
-                {/* Evidence Box - Compacto */}
-                <div className="bg-gradient-to-br from-red-950/40 to-slate-900 border-2 border-red-900/50 rounded-lg p-4 relative overflow-hidden">
+                <div className="bg-red-950/20 rounded-lg p-4 relative overflow-hidden">
                   <div className="shimmer absolute inset-0" />
                   <div className="relative z-10">
                     <div className="flex items-center gap-2 mb-3">
-                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                      <h3 className="text-xs font-bold text-red-400 uppercase tracking-widest">
+                      <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                      <h3 className="text-xs font-bold text-red-300 uppercase tracking-widest">
                         Evidência
                       </h3>
                     </div>
                     <blockquote className="text-white text-sm leading-relaxed mb-3">
                       "{evidence}"
                     </blockquote>
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <div className="flex items-center gap-2 text-xs text-slate-300">
                       <Clock className="w-3 h-3" />
                       <span>{evidenceTimestamp}</span>
                     </div>
@@ -273,28 +322,26 @@ const CriticalRiskCard: React.FC<CriticalRiskCardProps> = ({
               </div>
             </div>
 
-            {/* Action Banner - Compacto */}
-            <div className="bg-gradient-to-r from-amber-950/60 to-red-950/60 border-2 border-amber-600/40 rounded-lg p-4">
-              <div className="flex items-start gap-3">
+            <div className="bg-amber-950/20 rounded-lg p-4">
+              <div className="flex items-start gap-4">
                 <div className="bg-amber-500/20 rounded-full p-2 flex-shrink-0">
-                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
                 </div>
                 <div className="flex-grow">
-                  <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest mb-2">
+                  <h3 className="text-xs font-bold text-amber-300 uppercase tracking-widest mb-2">
                     Próximo Passo - Ação Recomendada
                   </h3>
                   <p className="text-white font-semibold mb-1 text-sm">
                     Action Owner: <span className="text-amber-300">{actionOwner}</span>
                   </p>
-                  <p className="text-slate-200 text-sm leading-relaxed">{actionDescription}</p>
+                  <p className="text-slate-100 text-sm leading-relaxed">{actionDescription}</p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Footer Info - Compacto */}
-        <div className="mt-3 text-center text-slate-500 text-xs">
+        <div className="mt-6 text-center text-slate-300 text-xs">
           <p>Dashboard de Gestão de Risco • Atualizado em tempo real</p>
         </div>
       </div>

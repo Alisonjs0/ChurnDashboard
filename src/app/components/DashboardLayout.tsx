@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import ClientSidebar, { Client } from '@/app/components/ClientSidebar';
 import MainDashboard from '@/app/components/MainDashboard';
 import CriticalRiskCard from '@/app/components/CriticalRiskCard';
@@ -24,13 +26,30 @@ type DashboardClient = ClientWithContact & {
   cliente_churn?: string;
 };
 
-function parseRiskLevel(value: unknown) {
-  if (typeof value === 'number') return value;
+function parseNumericValue(value: unknown): number | null {
+  if (typeof value === 'number' && !Number.isNaN(value)) return value;
   if (typeof value === 'string') {
     const parsed = Number(value.replace('%', '').replace(',', '.').trim());
     if (!Number.isNaN(parsed)) return parsed;
   }
-  return 0;
+  return null;
+}
+
+function clampRiskLevel(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function parseRiskLevel(scoreValue: unknown, fallbackRiskValue: unknown) {
+  const score = parseNumericValue(scoreValue);
+
+  // Regra: nivel de risco = 100 - score.
+  if (score !== null) {
+    if (score === 0) return 0;
+    return clampRiskLevel(100 - score);
+  }
+
+  const fallbackRisk = parseNumericValue(fallbackRiskValue);
+  return clampRiskLevel(fallbackRisk ?? 0);
 }
 
 function statusFromRiskLevel(riskLevel: number): ClientStatus {
@@ -62,10 +81,12 @@ function normalizeTrend(rawTrend: unknown): ClientTrend {
 }
 
 const DashboardLayout: React.FC = () => {
+  const searchParams = useSearchParams();
   // Começa com null para mostrar dashboard geral
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [apiClients, setApiClients] = useState<DashboardClient[]>([]);
   const [isLoadingClients, setIsLoadingClients] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(true);
 
   // Carregar clientes do Supabase via API
   useEffect(() => {
@@ -75,7 +96,7 @@ const DashboardLayout: React.FC = () => {
       .then(data => {
         if (data.success && Array.isArray(data.data)) {
           const mappedClients: DashboardClient[] = data.data.map((item: Record<string, unknown>) => {
-            const riskLevel = parseRiskLevel(item.score ?? item.riskLevel ?? item.risco);
+            const riskLevel = parseRiskLevel(item.score, item.riskLevel ?? item.risco);
             // Se não há score definido (0), marcar como BAIXO em vez de CRÍTICO
             const status = riskLevel === 0 ? 'BAIXO' : normalizeStatus(item.status, riskLevel);
 
@@ -117,6 +138,23 @@ const DashboardLayout: React.FC = () => {
   // Listagem deve vir apenas da tabela Clientes_Database via API
   const clients = apiClients;
 
+  useEffect(() => {
+    const clientIdFromQuery = searchParams.get('clientId');
+    if (!clientIdFromQuery) return;
+
+    const exists = clients.some((client) => client.id === clientIdFromQuery);
+    if (exists) {
+      setSelectedClientId(clientIdFromQuery);
+    }
+  }, [searchParams, clients]);
+
+  // Ao selecionar cliente, mantém o chat aberto por padrão.
+  useEffect(() => {
+    if (selectedClientId) {
+      setIsChatOpen(true);
+    }
+  }, [selectedClientId]);
+
   // Buscar cliente selecionado nos dados corretos (API ou mock)
   const selectedClient = selectedClientId 
     ? (clients.find((c) => c.id === selectedClientId) as DashboardClient | undefined)
@@ -145,7 +183,7 @@ const DashboardLayout: React.FC = () => {
   return (
     <div className="flex h-screen w-screen bg-slate-950 overflow-hidden">
       {/* Client Sidebar - Left */}
-      <div className="hidden md:flex w-80 flex-shrink-0 border-r border-slate-700">
+      <div className="hidden md:flex w-80 flex-shrink-0">
         <ClientSidebar
           clients={clients}
           selectedClientId={selectedClientId}
@@ -175,16 +213,48 @@ const DashboardLayout: React.FC = () => {
           )}
         </div>
 
-        {/* Chat Sidebar - Right - Fixed Width */}
+        {/* Chat Sidebar - Right - Animated */}
         {selectedClient && (
-          <div className="hidden lg:flex flex-col border-l border-slate-700 flex-shrink-0 w-[550px]">
-            <ClientChat
-              clientId={selectedClientId!}
-              clientName={selectedClient.name}
-              messages={[]}
-              clientEmail={selectedClient.email}
-              clientPhone={selectedClient.phone}
-            />
+          <div className="hidden lg:flex items-stretch relative">
+            <div
+              className={`relative flex-shrink-0 overflow-hidden bg-slate-800/20 border-l border-slate-700/30 transition-all duration-300 ease-out ${
+                isChatOpen ? 'w-[550px] opacity-100' : 'w-0 opacity-0'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setIsChatOpen(false)}
+                className="absolute right-3 top-3 z-20 w-8 h-8 rounded-full bg-slate-900/80 text-slate-200 hover:bg-slate-700 transition-colors flex items-center justify-center border border-slate-600/40"
+                aria-label="Fechar chat"
+                title="Fechar chat"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              <div className={`h-full transition-opacity duration-200 ${isChatOpen ? 'opacity-100' : 'opacity-0'}`}>
+                <ClientChat
+                  clientId={selectedClientId!}
+                  clientName={selectedClient.name}
+                  messages={[]}
+                  clientEmail={selectedClient.email}
+                  clientPhone={selectedClient.phone}
+                />
+              </div>
+            </div>
+
+            {!isChatOpen && (
+              <div className="flex items-center pl-2">
+                <button
+                  type="button"
+                  onClick={() => setIsChatOpen(true)}
+                  className="w-10 h-20 rounded-lg bg-slate-900/80 text-slate-200 hover:bg-slate-700/80 transition-colors flex items-center justify-center border border-slate-600/40"
+                  aria-label="Abrir chat"
+                  title="Abrir chat"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

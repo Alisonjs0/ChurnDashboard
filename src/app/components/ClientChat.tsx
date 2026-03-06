@@ -42,7 +42,11 @@ const ClientChat: React.FC<ClientChatProps> = ({
   const [newMessage, setNewMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
+  const [isDocumentVisible, setIsDocumentVisible] = useState(true);
+  const [isWindowFocused, setIsWindowFocused] = useState(true);
+  const [isChatPanelVisible, setIsChatPanelVisible] = useState(true);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const chatContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = () => {
@@ -53,18 +57,77 @@ const ClientChat: React.FC<ClientChatProps> = ({
     scrollToBottom();
   }, [chatMessages]);
 
-  // Load messages from API on component mount or when clientId changes
+  // Track page visibility state to avoid polling in background tabs.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsDocumentVisible(!document.hidden);
+    };
+
+    handleVisibilityChange();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // Track focus state to avoid polling when user is out of the app window.
+  useEffect(() => {
+    const handleFocus = () => setIsWindowFocused(true);
+    const handleBlur = () => setIsWindowFocused(false);
+
+    setIsWindowFocused(document.hasFocus());
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
+
+  // Track chat panel visibility (important when sidebar is hidden by responsive classes).
+  useEffect(() => {
+    const checkChatPanelVisibility = () => {
+      const panel = chatContainerRef.current;
+
+      if (!panel) {
+        setIsChatPanelVisible(true);
+        return;
+      }
+
+      const styles = window.getComputedStyle(panel);
+      const isVisibleByStyle = styles.display !== 'none' && styles.visibility !== 'hidden';
+      const isVisibleInLayout = panel.offsetParent !== null;
+
+      setIsChatPanelVisible(isVisibleByStyle && isVisibleInLayout);
+    };
+
+    checkChatPanelVisibility();
+    window.addEventListener('resize', checkChatPanelVisibility);
+
+    return () => {
+      window.removeEventListener('resize', checkChatPanelVisibility);
+    };
+  }, []);
+
+  const shouldPollConversation = isDocumentVisible && isWindowFocused && isChatPanelVisible;
+
+  // Keep local state in sync when changing client.
   useEffect(() => {
     setChatMessages(initialMessages);
+  }, [clientId]);
+
+  // Poll only while the chat is actually visible and app is focused.
+  useEffect(() => {
+    if (!shouldPollConversation) return;
+
     loadConversationHistory();
 
-    // Poll for new messages every 3 seconds
     const pollInterval = setInterval(() => {
       loadConversationHistory();
     }, 3000);
 
     return () => clearInterval(pollInterval);
-  }, [clientId]);
+  }, [clientId, shouldPollConversation]);
 
   const loadConversationHistory = async () => {
     try {
@@ -173,13 +236,13 @@ const ClientChat: React.FC<ClientChatProps> = ({
   };
 
   return (
-    <div className="w-full bg-gradient-to-b from-slate-800 to-slate-900 flex flex-col h-full overflow-hidden">
+    <div ref={chatContainerRef} className="w-full bg-slate-900 flex flex-col h-full overflow-hidden">
       {/* Header - Compact */}
-      <div className="border-b border-slate-700 p-3 flex-shrink-0 space-y-2">
-        <h2 className="text-sm font-bold text-white truncate">{clientName}</h2>
+      <div className="bg-slate-800/60 p-4 flex-shrink-0 space-y-2">
+        <h2 className="text-base font-bold text-white truncate">{clientName}</h2>
         
         {/* Contact Info */}
-        <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
+        <div className="flex items-center gap-3 text-xs text-slate-300 flex-wrap">
           {clientPhone && (
             <div className="flex items-center gap-1">
               <Phone className="w-3 h-3" />
@@ -196,19 +259,19 @@ const ClientChat: React.FC<ClientChatProps> = ({
 
         {/* Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-3 h-3 text-slate-600" />
+          <Search className="absolute left-3 top-2.5 w-3 h-3 text-slate-400" />
           <input
             type="text"
             placeholder="Buscar..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-slate-500"
+            className="w-full bg-slate-700/50 rounded px-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:bg-slate-700/70"
           />
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0" id="messages-container">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 min-h-0" id="messages-container">
         {filteredMessages.length > 0 ? (
           filteredMessages.map((message) => (
             <div
@@ -218,20 +281,20 @@ const ClientChat: React.FC<ClientChatProps> = ({
               <div
                 className={`max-w-xs rounded px-3 py-2 text-xs space-y-1 ${
                   message.sender === 'support'
-                    ? 'bg-blue-600/20 border border-blue-600/30'
+                    ? 'bg-blue-600/20'
                     : message.type === 'alert'
-                    ? 'bg-red-600/20 border border-red-600/30'
+                    ? 'bg-red-600/20'
                     : message.type === 'note'
-                    ? 'bg-amber-600/20 border border-amber-600/30'
-                    : 'bg-slate-700 border border-slate-600'
-                } text-slate-200`}
+                    ? 'bg-amber-600/20'
+                    : 'bg-slate-700/50'
+                } text-slate-100`}
               >
-                <p className="font-semibold text-slate-300 text-sm">
+                <p className="font-semibold text-slate-200 text-sm">
                   {message.senderName.split(' - ')[0]}
                 </p>
                 <p className="text-sm leading-relaxed">{message.message}</p>
-                <p className="text-slate-500 text-xs">{message.timestamp}</p>
-                <p className="text-slate-500 text-[10px] leading-tight">
+                <p className="text-slate-400 text-xs">{message.timestamp}</p>
+                <p className="text-slate-400 text-[10px] leading-tight">
                   {`status: ${message.status || 'n/a'} • origem: ${message.source || 'n/a'}`}
                   {typeof message.webhookStatus === 'number' ? ` • webhook: ${message.webhookStatus}` : ''}
                 </p>
@@ -247,7 +310,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-slate-700 p-2 flex-shrink-0">
+      <div className="bg-slate-800/40 p-4 flex-shrink-0">
         <div className="flex gap-2">
           <input
             type="text"
@@ -257,7 +320,7 @@ const ClientChat: React.FC<ClientChatProps> = ({
             onKeyPress={(e) => {
               if (e.key === 'Enter') handleSendMessage();
             }}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-slate-500"
+            className="flex-1 bg-slate-700/50 rounded px-3 py-1.5 text-sm text-white placeholder-slate-400 focus:outline-none focus:bg-slate-700/70"
           />
           <button
             onClick={handleSendMessage}
